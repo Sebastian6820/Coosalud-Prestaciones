@@ -1,0 +1,190 @@
+SELECT 
+TD_APO tipoIdEmpleador,
+DOC_APO idEmpleador ,
+T_DOC_COT tipoIdUsuario,
+DOC_COTIZANTE idUsuario,
+CASE 
+	WHEN DOC_APO = DOC_COTIZANTE THEN 'I' ELSE 'D'
+END AS TipoAfil,
+PE_NUM_PRESTACION idIncapa,
+DX DiagPpal,
+CASE 
+	WHEN dx = 'U071' OR dx = 'U072' THEN 1 ELSE 0
+END AS Covid,
+FEC_INICIO_AJUSTADA FIniIncap,
+FEC_FIN_AJUSTADA FFinIncap,
+ROUND( IBC_MES,0) Salario,
+FEC_CREACION  FRadIncap,
+CASE 
+	WHEN FECHA_PAGO IS NOT NULL THEN 'P' ELSE null
+END EstadoIncap,
+MJ.tipo tipoIncapacidad,
+ESTADO_PE ,
+Case
+WHEN mk.ESTADO_LIQ = 'L0' AND FECHA_PAGO IS NULL THEN 'L0' ELSE NULL
+END LIQU_0,
+FECHA_PAGO Fpago,
+VALOR_LIQ_PE,
+DIAS_A_RECONOCER  Dias,
+Case
+ WHEN FECHA_PAGO IS NULL AND mk.ESTADO_LIQ IS NULL  THEN 'P' ELSE 'T'
+ END tipoPago,
+ CONTINGENCIA,
+ CX.CO_DESCRIPCION,
+ FEC_LIQUIDACION,
+ FECHA_CREACION,
+ CASE
+ 	WHEN MJ.tipo = 'INICIAL' THEN NULL 
+ 	ELSE mj.CUMULATIVE_SUM
+ END AS dias_acumulados_de_prorroga,
+ ROW_NUMBER () OVER(PARTITION BY PE_NUM_PRESTACION ORDER BY PE_NUM_PRESTACION, VALOR_LIQ_PE DESC) Fila_de_la_prestacion,
+ --Validcion de prestaciones a eliminar por duplicidad de re liquidación------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ CASE
+ 	WHEN ROW_NUMBER () OVER(PARTITION BY PE_NUM_PRESTACION ORDER BY PE_NUM_PRESTACION, VALOR_LIQ_PE DESC) >1 AND mk.ESTADO_LIQ = 'L0' AND FECHA_PAGO IS NULL THEN 'Validar' ELSE 'Dejar'
+ END LIQUIDACIONES_A_QUITAR
+--Origen
+FROM DW_CICLO_INGRESO_UPC.VAULT_FUENTES.VW_INCAPACIDADES A
+--Cruce con datos de prestaciones Prorrogas------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ 
+LEFT JOIN (WITH t1 AS (SELECT distinct
+    tipo_documento,
+    documento,
+    cr_concepto_favorable,
+    cr_nota,
+    fecha_emision_concepto,
+    fecha_creacion_concepto,
+    id_pro,
+    Dias_Acumulados,
+    CASE
+       WHEN FECHA_INICIO_2 IS NULL THEN '01/01/2000'
+    ELSE CAST(FECHA_INICIO_2 AS DATE)
+    END fecha_ini,
+    fecha_fin,
+    Numero_Prestacion,
+    DIAGNOSTICO,
+    Dias_Ajustados,
+    cantidad,
+    Dias_Ajustados/cantidad DIAS_REALES,
+    prolongacion_id
+FROM
+    (
+        SELECT
+            pe.pe_tipo_doc_cotizante                                                 tipo_documento,
+            pe.pe_numero_doc_cotizante                                               documento,
+            MIN(pea.pea_fecha_ini_prestacion)                                fecha_ini,
+            MAX(pea.pea_fecha_fin_prestacion)                               fecha_fin,
+            SUM(pea.pea_dias_solicitados)                                            dias_solicitados,
+            SUM(pea.pea_dias_reconocer)                                              dias_reconocer,
+            SUM(pea.pea_valor_total_liq)                                             valor_total_liquida,
+            SUM(pe.PE_DIAS_AJUSTADOS)                                                Dias_Ajustados,
+            cr.cr_concepto_favorable,
+            cr.cr_nota,
+            COUNT(*)                                                                 cantidad,
+            cr.cr_fecha_emision_concepto                                     fecha_emision_concepto,
+            cr.created_date                                                   fecha_creacion_concepto,
+            pr.id                                                                    id_pro,
+            pe.PE_NUM_PRESTACION                                                     Numero_Prestacion,
+            pr_dias_acumulados                                                       Dias_Acumulados,
+            pe.pe_diagnostico_id                                                        Diagnostico,
+            VPE.FEC_INICIO_AJUSTADA                                                   FECHA_INICIO_2,
+            pr.id                                                                     prolongacion_id
+        FROM
+               DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_PRESTACION_ECONOMICA   pe
+            LEFT JOIN DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_PRESTACION_E_APORTANTE       pea ON pea.pea_pe_id = pe.id
+            left JOIN  DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_PROLONGACION_PE            pr ON pe.pe_prolongacion_id = pr.id
+            LEFT JOIN DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_CONCEPTO_REHABILITACION      cr ON pr.id = cr.cr_prolongacion_id
+            left JOIN DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_AFILIADOS                   a ON pe.pe_afiliado_id = a.id
+            left JOIN DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_MUNICIPIO                    ma ON a.afi_municipio_atencion = ma.id
+            left JOIN DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_MUNICIPIO                    md ON a.afi_municipio_dpn = md.id
+            left JOIN DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_PRESTACION_E_APORTANTE       upea ON upea.pea_pe_id = pr.pr_ult_prestacion_id
+            left JOIN DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_REL_LABORAL_AFI              urla ON upea.pea_rel_laboral_id = urla.id
+            left JOIN DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_APORTANTE                    uap ON urla.rla_aportante_id = uap.id
+            left JOIN DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_PRESTACION_ECONOMICA         upe ON pr.pr_ult_prestacion_id = upe.id
+            left JOIN  DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_IPS                         uips ON upe.pe_ips_id = uips.id
+            LEFT JOIN   DW_CICLO_INGRESO_UPC.VAULT_FUENTES.VW_INCAPACIDADES               VPE ON pe.PE_NUM_PRESTACION = VPE.PE_NUM_PRESTACION  
+            GROUP BY
+            pe.pe_tipo_doc_cotizante,
+            pe.pe_numero_doc_cotizante,
+            cr.cr_concepto_favorable,
+            cr.cr_nota,
+            cr.cr_fecha_emision_concepto,
+            cr.created_date,
+            pr.id,
+            pe.PE_NUM_PRESTACION,
+            pe.pe_diagnostico_id,
+            pr_dias_acumulados,
+             VPE.FEC_INICIO_AJUSTADA,
+             pr.id
+    )todas)
+    SELECT
+    tipo_documento,
+    documento,
+    Dias_Acumulados,
+    DIAGNOSTICO,
+    Numero_Prestacion,
+    DIAS_REALES,
+    case
+    WHEN DIAS_ACUMULADOS IS NOT NULL THEN SUM(DIAS_REALES) OVER (PARTITION BY TIPO_DOCUMENTO||'-'||DOCUMENTO||'-'||DIAS_ACUMULADOS ORDER BY FECHA_INI ASC)
+    WHEN DIAGNOSTICO LIKE 'O%' THEN NULL 
+    WHEN DIAGNOSTICO LIKE 'o%' THEN NULL
+    ELSE DIAS_REALES
+    END CUMULATIVE_SUM,
+    cantidad,
+    fecha_ini,
+    fecha_fin,
+    CASE 
+    	WHEN ROW_NUMBER() OVER (PARTITION BY TIPO_DOCUMENTO,DOCUMENTO,DIAS_ACUMULADOS ORDER BY FECHA_INI ASC) = 1 THEN 'INICIAL'
+    	WHEN DIAS_ACUMULADOS IS NULL THEN 'INICIAL'
+    	ELSE 'PRORROGA'
+    END TIPO,
+    SUBSTR(max(fecha_fin),1,10) Fecha_de_la_ultima_incapacidad,
+    prolongacion_id
+    	 	FROM t1
+    	 	GROUP BY 
+    	 	tipo_documento,
+    		documento,
+   			Dias_Acumulados,
+			Numero_Prestacion,
+  			DIAS_REALES,
+   		 	cantidad,
+       		fecha_ini,
+    		fecha_fin,
+    		prolongacion_id,
+    		DIAGNOSTICO
+    		ORDER BY documento ASC, FECHA_INI ASC) MJ ON MJ.Numero_Prestacion = A.PE_NUM_PRESTACION
+--Cruce con datos de prestaciones liquidadas en 0    ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ LEFT JOIN (SELECT 
+PE_NUM_PRESTACION PRESTACION_LIQ_0,
+ESTADO_LIQ
+FROM DW_CICLO_INGRESO_UPC.VAULT_FUENTES.VW_INCAPACIDADES
+WHERE ESTADO_LIQ = 'L0') MK ON MK.PRESTACION_LIQ_0 = A.PE_NUM_PRESTACION
+--Cruce con códigos de contingencias PE--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+LEFT JOIN DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_CONTINGENCIA_PE CX ON CX.CO_CODIGO = A.CONTINGENCIA
+--Condicionales
+WHERE FEC_INICIO_AJUSTADA  >= DATEADD(YEAR, -4, CURRENT_DATE())
+AND VALOR_LIQ_PE > 0 AND ESTADO_PE = 'VA' AND TIPO_CONTIG = 'INC'
+--Agrupaciones
+GROUP BY 
+TD_APO,
+DOC_APO ,
+T_DOC_COT,
+DOC_COTIZANTE,
+PE_NUM_PRESTACION,
+DX,
+FEC_INICIO_AJUSTADA,
+FEC_FIN_AJUSTADA,
+IBC_MES,
+FEC_CREACION ,
+ESTADO_PE,
+mk.ESTADO_LIQ,
+FECHA_PAGO,
+VALOR_LIQ_PE,
+DIAS_A_RECONOCER,
+MJ.tipo,
+CONTINGENCIA,
+CX.CO_DESCRIPCION,
+FEC_LIQUIDACION,
+FECHA_CREACION,
+ mj.Dias_Acumulados,
+ mj.CUMULATIVE_SUM
+--Ordenación
+ORDER BY T_DOC_COT||'-'||DOC_COTIZANTE ASC, FEC_INICIO_AJUSTADA ASC
