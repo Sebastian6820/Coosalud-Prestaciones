@@ -1,0 +1,55 @@
+ WITH T1 AS (SELECT
+            pe.pe_tipo_doc_cotizante                                                 tipo_documento,
+            pe.pe_numero_doc_cotizante                                               documento,
+            MAX(pea.pea_fecha_fin_prestacion)                                fecha_fin,
+            SUM(pe.PE_DIAS_AJUSTADOS)                                                Dias_Ajustados,
+            cr.cr_concepto_favorable,
+            cr.cr_nota,
+            COUNT(*)                                                                 cantidad,
+            cr.cr_fecha_emision_concepto                                     fecha_emision_concepto,
+            cr.created_date                                                   fecha_creacion_concepto,
+            pr.id                                                                    id_pro,
+            LISTAGG(pe.PE_NUM_PRESTACION,';') OVER(PARTITION BY pe.pe_tipo_doc_cotizante ||'-'||pe.pe_numero_doc_cotizante ||'-'||pr_dias_acumulados ) Prestaciones,
+            LISTAGG(pe.pe_diagnostico_id,';') OVER(PARTITION BY pe.pe_tipo_doc_cotizante ||'-'||pe.pe_numero_doc_cotizante ||'-'||pr_dias_acumulados ) Diagnosticos,
+            LISTAGG(MAX(pea.pea_fecha_fin_prestacion),';') OVER(PARTITION BY pe.pe_tipo_doc_cotizante ||'-'||pe.pe_numero_doc_cotizante ||'-'||pr_dias_acumulados ) fecha_final,
+            pr_dias_acumulados                                                       Dias_Acumulados
+        FROM
+                 DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_PRESTACION_ECONOMICA pe
+            INNER JOIN DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_PRESTACION_E_APORTANTE       pea ON pea.pea_pe_id = pe.id
+            INNER JOIN DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_PROLONGACION_PE              pr ON pe.pe_prolongacion_id = pr.id
+            left JOIN DWH_PRODUCCION.VAULT_FUENTES.S_SAL_MS_CONCEPTO_REHABILITACION      cr ON pr.id = cr.cr_prolongacion_id
+            WHERE pr_dias_acumulados >= 60
+                GROUP BY
+            pe.pe_tipo_doc_cotizante,
+            pe.pe_numero_doc_cotizante,
+            cr.cr_concepto_favorable,
+            cr.cr_nota,
+            cr.cr_fecha_emision_concepto,
+            cr.created_date,
+            pr.id,
+            pe.PE_NUM_PRESTACION,
+            pe.pe_diagnostico_id,
+            pr_dias_acumulados
+            )SELECT 
+            tipo_documento,
+    documento,
+    cr_concepto_favorable,
+    cr_nota,
+    fecha_emision_concepto,
+    fecha_creacion_concepto,
+    id_pro,
+    Dias_Acumulados,
+    Prestaciones,
+    Diagnosticos,
+    SUBSTR(max(fecha_fin),1,10) Fecha_de_la_ultima_incapacidad
+    	 	FROM t1
+    	 	GROUP BY   tipo_documento,
+    documento,
+    cr_concepto_favorable,
+    cr_nota,
+    fecha_emision_concepto,
+    fecha_creacion_concepto,
+    id_pro,
+    Dias_Acumulados,
+    Prestaciones,
+    Diagnosticos
